@@ -1,0 +1,82 @@
+package consumer;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.sqs.model.Message;
+
+import java.util.concurrent.TimeUnit;
+
+public class ImageConsumer {
+    private final ConfigService config;
+    private final ImageProcessor processor;
+    private final ObjectMapper mapper;
+
+    public ImageConsumer() {
+        this.config = new ConfigService();
+        this.processor = new ImageProcessor();
+        this.mapper = new ObjectMapper();
+    }
+
+    public void start() {
+        System.out.println("=== Consumidor Iniciado (Fluxo S3 + SES) ===");
+        System.out.println("[Config] Fila: " + config.getSqsQueueUrl());
+        System.out.println("[Config] S3 Saída: " + config.getS3OutputBucketName());
+
+        try (SqsService sqs = new SqsService(config.getRegion(), config.getSqsQueueUrl());
+             S3Service s3 = new S3Service(config.getRegion(), config.getS3BucketName());
+             SesService ses = new SesService(config.getRegion(), config.getSesSenderEmail())) {
+
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    for (Message msg : sqs.receiveMessages()) {
+                        processMessage(msg, sqs, s3, ses);
+                    }
+                } catch (Exception e) {
+                    System.err.println("[Erro] Falha no ciclo: " + e.getMessage());
+                    handleRetryDelay();
+                }
+            }
+        }
+    }
+
+    private void processMessage(Message msg, SqsService sqs, S3Service s3, SesService ses) throws Exception {
+        System.out.println("\n[SQS] Novo evento de S3 detectado!");
+
+        JsonNode root = mapper.readTree(msg.body());
+        JsonNode s3Event = root.get("Records").get(0).get("s3");
+        String bucketName = s3Event.get("bucket").get("name").asText();
+        String objectKey = s3Event.get("object").get("key").asText();
+
+        System.out.println("[S3] Baixando arquivo: " + objectKey + " do bucket: " + bucketName);
+        ResponseBytes<GetObjectResponse> s3Response = s3.downloadImage(bucketName, objectKey);
+        
+        String userEmail = s3Response.response().metadata().get("user-email");
+        System.out.println("[S3] Metadado encontrado - E-mail: " + userEmail);
+
+        System.out.println("[Processamento] Redimensionando imagem...");
+        byte[] processedImage = processor.process(s3Response.asByteArray());
+
+        System.out.println("[S3] Enviando para o bucket de saída: " + config.getS3OutputBucketName());
+        s3.uploadImage(config.getS3OutputBucketName(), objectKey, processedImage);
+
+        System.out.println("[SES] Disparando notificação...");
+        ses.sendSuccessEmail(userEmail, objectKey);
+
+        sqs.deleteMessage(msg.receiptHandle());
+        System.out.println("[Sucesso] Ciclo finalizado para: " + objectKey);
+    }
+
+    private void handleRetryDelay() {
+        try {
+            TimeUnit.SECONDS.sleep(5);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    public static void main(String[] args) {
+        new ImageConsumer().start();
+    }
+}
