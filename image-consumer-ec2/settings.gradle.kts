@@ -1,1 +1,1 @@
-rootProject.name = "ec2-consumer"
+rootProject.name = "image-consumer-ec2"
