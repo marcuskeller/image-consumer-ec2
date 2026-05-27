@@ -19,15 +19,20 @@ public class ImageConsumer {
         this.mapper = new ObjectMapper();
     }
 
+    public static void main(String[] args) {
+        new ImageConsumer().start();
+    }
+
     public void start() {
         System.out.println("=== Consumidor Iniciado (Fluxo S3 + SES) ===");
         System.out.println("[Config] Fila: " + config.getSqsQueueUrl());
         System.out.println("[Config] S3 Saída: " + config.getS3OutputBucketName());
 
-        try (SqsService sqs = new SqsService(config.getRegion(), config.getSqsQueueUrl());
-             S3Service s3 = new S3Service(config.getRegion(), config.getS3BucketName());
-             SesService ses = new SesService(config.getRegion(), config.getSesSenderEmail())) {
-
+        try (
+             SqsService sqs = new SqsService(config.getRegion(), config.getSqsQueueUrl());
+             S3Service s3 = new S3Service(config.getRegion());
+             SesService ses = new SesService(config.getRegion(), config.getSesSenderEmail())
+        ) {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     for (Message msg : sqs.receiveMessages()) {
@@ -49,7 +54,13 @@ public class ImageConsumer {
         String bucketName = s3Event.get("bucket").get("name").asText();
         String objectKey = s3Event.get("object").get("key").asText();
 
-        System.out.println("[S3] Baixando arquivo: " + objectKey + " do bucket: " + bucketName);
+        if (objectKey.contains("-processed")) {
+            System.out.println("[SQS] Arquivo já processado detectado (" + objectKey + "). Ignorando para evitar loop.");
+            sqs.deleteMessage(msg.receiptHandle());
+            return;
+        }
+
+        System.out.println("[S3] Baixando arquivo original: " + objectKey);
         ResponseBytes<GetObjectResponse> s3Response = s3.downloadImage(bucketName, objectKey);
         
         String userEmail = s3Response.response().metadata().get("user-email");
@@ -58,14 +69,23 @@ public class ImageConsumer {
         System.out.println("[Processamento] Redimensionando imagem...");
         byte[] processedImage = processor.process(s3Response.asByteArray());
 
-        System.out.println("[S3] Enviando para o bucket de saída: " + config.getS3OutputBucketName());
-        s3.uploadImage(config.getS3OutputBucketName(), objectKey, processedImage);
+        String outputKey = objectKey.replace("-original", "-processed");
+
+        if (outputKey.equals(objectKey)) {
+            outputKey = objectKey + "-processed";
+        }
+
+        System.out.println("[S3] Enviando versão processada: " + outputKey);
+        s3.uploadImage(config.getS3OutputBucketName(), outputKey, processedImage);
+
+        System.out.println("[S3] Gerando link temporário...");
+        String presignedUrl = s3.generatePresignedUrl(config.getS3OutputBucketName(), outputKey);
 
         System.out.println("[SES] Disparando notificação...");
-        ses.sendSuccessEmail(userEmail, objectKey);
+        ses.sendSuccessEmail(userEmail, outputKey, presignedUrl);
 
         sqs.deleteMessage(msg.receiptHandle());
-        System.out.println("[Sucesso] Ciclo finalizado para: " + objectKey);
+        System.out.println("[Sucesso] Ciclo finalizado para: " + outputKey);
     }
 
     private void handleRetryDelay() {
@@ -74,9 +94,5 @@ public class ImageConsumer {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
         }
-    }
-
-    public static void main(String[] args) {
-        new ImageConsumer().start();
     }
 }

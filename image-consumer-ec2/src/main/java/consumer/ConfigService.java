@@ -10,10 +10,6 @@ public class ConfigService {
 
     public String getSqsQueueUrl() { return getEnv("SQS_QUEUE_URL"); }
 
-    public String getS3BucketName() {
-        return getEnv("S3_BUCKET_NAME");
-    }
-
     public String getS3OutputBucketName() {
         return getEnv("S3_OUTPUT_BUCKET_NAME");
     }

@@ -18,14 +18,16 @@ public class SesService implements AutoCloseable {
         this.senderEmail = senderEmail;
     }
 
-    public void sendSuccessEmail(String recipientEmail, String fileName) {
+    public void sendSuccessEmail(String recipientEmail, String fileName, String presignedUrl) {
         if (recipientEmail == null || recipientEmail.isEmpty()) {
             System.err.println("[SES] E-mail do destinatário não encontrado nos metadados.");
             return;
         }
 
         String subject = "Sua imagem foi processada com sucesso!";
-        String bodyText = "Olá!\n\nA sua imagem " + fileName + " foi processada e já está disponível no bucket de saída.";
+        String bodyText = "Olá!\n\nA sua imagem " + fileName + " foi processada e já está disponível.\n\n" +
+                "Você pode acessá-la pelo link abaixo (válido por 1 hora):\n" + presignedUrl + "\n\n" +
+                "Obrigado!";
 
         SendEmailRequest request = SendEmailRequest.builder()
                 .fromEmailAddress(senderEmail)
