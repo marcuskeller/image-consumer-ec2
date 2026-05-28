@@ -27,6 +27,8 @@ public class ImageConsumer {
         System.out.println("=== Consumidor Iniciado (Fluxo S3 + SES) ===");
         System.out.println("[Config] Fila: " + config.getSqsQueueUrl());
         System.out.println("[Config] S3 Saída: " + config.getS3OutputBucketName());
+        System.out.println("[Config] Application Region: " + config.getRegion());
+        System.out.println("[Config] Sender Email: " + config.getSesSenderEmail());
 
         try (
              SqsService sqs = new SqsService(config.getRegion(), config.getSqsQueueUrl());
@@ -50,7 +52,22 @@ public class ImageConsumer {
         System.out.println("\n[SQS] Novo evento de S3 detectado!");
 
         JsonNode root = mapper.readTree(msg.body());
-        JsonNode s3Event = root.get("Records").get(0).get("s3");
+
+        JsonNode records = root.get("Records");
+        if (records == null || !records.isArray() || records.isEmpty()) {
+            System.out.println("[SQS] Mensagem ignorada: Não contém evento S3 válido.");
+            sqs.deleteMessage(msg.receiptHandle());
+            return;
+        }
+
+        JsonNode s3Event = records.get(0).get("s3");
+
+        if (s3Event == null || s3Event.get("bucket") == null || s3Event.get("object") == null) {
+            System.out.println("[SQS] Formato de evento S3 inesperado.");
+            sqs.deleteMessage(msg.receiptHandle());
+            return;
+        }
+
         String bucketName = s3Event.get("bucket").get("name").asText();
         String objectKey = s3Event.get("object").get("key").asText();
 

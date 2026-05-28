@@ -64,5 +64,5 @@ aws s3 ls
 ### Iniciando EC2
 Para iniciar a sua instância da AWS abra o seu cmd e insira o seguinte comando:
 ```
--i "...\key-pair.pem" ec2-user@seu_IP_publico_ec2
+ssh -i "...\key-pair.pem" ec2-user@seu_IP_publico_ec2
 ```

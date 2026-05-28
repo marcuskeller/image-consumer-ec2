@@ -19,7 +19,7 @@ public class ConfigService {
     }
 
     public Region getRegion() {
-        String region = getEnv("AWS_REGION");
+        String region = getEnv("APP_REGION");
         return Region.of(region != null ? region : "us-east-1");
     }
 }
